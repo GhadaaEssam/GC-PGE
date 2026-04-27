@@ -15,7 +15,6 @@ ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
 from warnings import simplefilter
 simplefilter(action="ignore",category=FutureWarning)
 
-
 class Stream(QObject):
     """【输出重定向】重定向控制台输出到文本框控件"""
     newText = pyqtSignal(str)

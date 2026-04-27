@@ -463,61 +463,82 @@ class Ui_MainWindow(object):
     def retranslateUi(self, MainWindow):
         _translate = QtCore.QCoreApplication.translate
         MainWindow.setWindowTitle(_translate("MainWindow", "GC-PGE"))
+        
+        # Training tab
         self.groupBox_2.setToolTip(_translate("MainWindow", "<html><head/><body><p><br/></p></body></html>"))
         self.groupBox_2.setWhatsThis(_translate("MainWindow", "<html><head/><body><p><br/></p></body></html>"))
-        self.groupBox_2.setTitle(_translate("MainWindow", "数据输入"))
-        self.label_7.setToolTip(_translate("MainWindow", "<html><head/><body><p>请选择输入样本表达值矩阵文件</p></body></html>"))
-        self.label_7.setText(_translate("MainWindow", "样本表达矩阵:"))
-        self.label_8.setToolTip(_translate("MainWindow", "<html><head/><body><p>请选择输入样本标签文件</p></body></html>"))
-        self.label_8.setText(_translate("MainWindow", "样本标签:"))
-        self.label_9.setToolTip(_translate("MainWindow", "<html><head/><body><p>请选择特征基因，若需随机抽取加入训练的特征基因，则需勾选“选取特征基因”选项。</p></body></html>"))
-        self.label_9.setText(_translate("MainWindow", "特征基因:"))
-        self.label_10.setToolTip(_translate("MainWindow", "<html><head/><body><p>请选择信号通路网络文件</p></body></html>"))
-        self.label_10.setText(_translate("MainWindow", "信号通路网络:"))
-        self.label_11.setToolTip(_translate("MainWindow", "<html><head/><body><p>请选择PPI网络文件</p></body></html>"))
-        self.label_11.setText(_translate("MainWindow", "ppi网络:"))
-        self.label_12.setToolTip(_translate("MainWindow", "<html><head/><body><p>请选择同源基因网络文件</p></body></html>"))
-        self.label_12.setText(_translate("MainWindow", "同源网络:"))
+        self.groupBox_2.setTitle(_translate("MainWindow", "Data Input"))
+        
+        self.label_7.setToolTip(_translate("MainWindow", "<html><head/><body><p>Select the input sample expression matrix file</p></body></html>"))
+        self.label_7.setText(_translate("MainWindow", "Sample Expression Matrix:"))
+        
+        self.label_8.setToolTip(_translate("MainWindow", "<html><head/><body><p>Select the input sample label file</p></body></html>"))
+        self.label_8.setText(_translate("MainWindow", "Sample Labels:"))
+        
+        self.label_9.setToolTip(_translate("MainWindow", "<html><head/><body><p>Select feature genes. To randomly include genes in training, check 'Select Feature Genes'.</p></body></html>"))
+        self.label_9.setText(_translate("MainWindow", "Feature Genes:"))
+        
+        self.label_10.setToolTip(_translate("MainWindow", "<html><head/><body><p>Select the signaling pathway network file</p></body></html>"))
+        self.label_10.setText(_translate("MainWindow", "Signaling Pathway Network:"))
+        
+        self.label_11.setToolTip(_translate("MainWindow", "<html><head/><body><p>Select the PPI network file</p></body></html>"))
+        self.label_11.setText(_translate("MainWindow", "PPI Network:"))
+        
+        self.label_12.setToolTip(_translate("MainWindow", "<html><head/><body><p>Select the homologous gene network file</p></body></html>"))
+        self.label_12.setText(_translate("MainWindow", "Homolog Network:"))
+        
         self.toolButton_7.setText(_translate("MainWindow", "..."))
         self.toolButton_8.setText(_translate("MainWindow", "..."))
         self.toolButton_9.setText(_translate("MainWindow", "..."))
-        self.checkBox_2.setText(_translate("MainWindow", "选定特征基因"))
+        self.checkBox_2.setText(_translate("MainWindow", "Select Feature Genes"))
         self.toolButton_10.setText(_translate("MainWindow", "..."))
         self.toolButton_11.setText(_translate("MainWindow", "..."))
         self.toolButton_12.setText(_translate("MainWindow", "..."))
-        self.pushButton_6.setText(_translate("MainWindow", "运算"))
-        self.groupBox_4.setTitle(_translate("MainWindow", "控制台日志"))
-        self.groupBox_3.setTitle(_translate("MainWindow", "训练结果"))
-        self.pushButton_2.setText(_translate("MainWindow", "保存结果"))
-        self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab_5), _translate("MainWindow", "模型训练"))
+        self.pushButton_6.setText(_translate("MainWindow", "Run"))
+        
+        self.groupBox_4.setTitle(_translate("MainWindow", "Console Log"))
+        self.groupBox_3.setTitle(_translate("MainWindow", "Training Results"))
+        self.pushButton_2.setText(_translate("MainWindow", "Save Results"))
+        self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab_5), _translate("MainWindow", "Model Training"))
+        
+        # Prediction tab
         self.groupBox.setToolTip(_translate("MainWindow", "<html><head/><body><p><br/></p></body></html>"))
         self.groupBox.setWhatsThis(_translate("MainWindow", "<html><head/><body><p><br/></p></body></html>"))
-        self.groupBox.setTitle(_translate("MainWindow", "数据输入"))
-        self.label.setToolTip(_translate("MainWindow", "<html><head/><body><p>请选择输入样本表达值矩阵文件</p></body></html>"))
-        self.label.setText(_translate("MainWindow", "模型选择:"))
-        self.label_2.setToolTip(_translate("MainWindow", "<html><head/><body><p>请选择输入样本标签文件</p></body></html>"))
-        self.label_2.setText(_translate("MainWindow", "样本表达矩阵:"))
-        self.label_3.setToolTip(_translate("MainWindow", "<html><head/><body><p>请选择特征基因，若需随机抽取加入训练的特征基因，则需勾选“选取特征基因”选项。</p></body></html>"))
-        self.label_3.setText(_translate("MainWindow", "特征基因:"))
-        self.label_4.setToolTip(_translate("MainWindow", "<html><head/><body><p>请选择信号通路网络文件</p></body></html>"))
-        self.label_4.setText(_translate("MainWindow", "信号通路网络:"))
-        self.label_5.setToolTip(_translate("MainWindow", "<html><head/><body><p>请选择PPI网络文件</p></body></html>"))
-        self.label_5.setText(_translate("MainWindow", "ppi网络:"))
-        self.label_6.setToolTip(_translate("MainWindow", "<html><head/><body><p>请选择同源基因网络文件</p></body></html>"))
-        self.label_6.setText(_translate("MainWindow", "同源网络:"))
+        self.groupBox.setTitle(_translate("MainWindow", "Data Input"))
+        
+        self.label.setToolTip(_translate("MainWindow", "<html><head/><body><p>Select the input sample expression matrix file</p></body></html>"))
+        self.label.setText(_translate("MainWindow", "Select Model:"))
+        
+        self.label_2.setToolTip(_translate("MainWindow", "<html><head/><body><p>Select the input sample expression matrix file</p></body></html>"))
+        self.label_2.setText(_translate("MainWindow", "Sample Expression Matrix:"))
+        
+        self.label_3.setToolTip(_translate("MainWindow", "<html><head/><body><p>Select feature genes. To randomly include genes in training, check 'Select Feature Genes'.</p></body></html>"))
+        self.label_3.setText(_translate("MainWindow", "Feature Genes:"))
+        
+        self.label_4.setToolTip(_translate("MainWindow", "<html><head/><body><p>Select the signaling pathway network file</p></body></html>"))
+        self.label_4.setText(_translate("MainWindow", "Signaling Pathway Network:"))
+        
+        self.label_5.setToolTip(_translate("MainWindow", "<html><head/><body><p>Select the PPI network file</p></body></html>"))
+        self.label_5.setText(_translate("MainWindow", "PPI Network:"))
+        
+        self.label_6.setToolTip(_translate("MainWindow", "<html><head/><body><p>Select the homologous gene network file</p></body></html>"))
+        self.label_6.setText(_translate("MainWindow", "Homolog Network:"))
+        
         self.toolButton.setText(_translate("MainWindow", "..."))
         self.toolButton_2.setText(_translate("MainWindow", "..."))
         self.toolButton_3.setText(_translate("MainWindow", "..."))
-        self.checkBox.setText(_translate("MainWindow", "选定特征基因"))
+        self.checkBox.setText(_translate("MainWindow", "Select Feature Genes"))
         self.toolButton_4.setText(_translate("MainWindow", "..."))
         self.toolButton_5.setText(_translate("MainWindow", "..."))
         self.toolButton_6.setText(_translate("MainWindow", "..."))
-        self.pushButton.setText(_translate("MainWindow", "运算"))
-        self.groupBox_5.setTitle(_translate("MainWindow", "控制台日志"))
-        self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab), _translate("MainWindow", "预测"))
-        self.pushButton_5.setText(_translate("MainWindow", "保存结果"))
-        self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab_4), _translate("MainWindow", "耐药分类预测"))
-        self.pushButton_3.setText(_translate("MainWindow", "保存结果"))
-        self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab_2), _translate("MainWindow", "重要通路排序"))
-        # self.pushButton_4.setText(_translate("MainWindow", "保存结果"))
-        # self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab_3), _translate("MainWindow", "核心靶点预测"))
+        self.pushButton.setText(_translate("MainWindow", "Run"))
+        
+        self.groupBox_5.setTitle(_translate("MainWindow", "Console Log"))
+        self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab), _translate("MainWindow", "Prediction"))
+        
+        # Additional tabs
+        self.pushButton_5.setText(_translate("MainWindow", "Save Results"))
+        self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab_4), _translate("MainWindow", "Drug Resistance Prediction"))
+        
+        self.pushButton_3.setText(_translate("MainWindow", "Save Results"))
+        self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab_2), _translate("MainWindow", "Important Pathway Ranking"))
