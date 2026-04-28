@@ -121,6 +121,90 @@ def load_multiomics(
         'gene_ids': data_geo_x.columns.to_list(),
     }
 
+def make_data_multiomics(omics_dict, labels, k, i, seed=42):
+    assert k > 1
+
+    data = Data()
+
+    data_geo_x = omics_dict['data_geo_x']
+    data_meth_x = omics_dict['data_meth_x']
+    data_cnv_x = omics_dict['data_cnv_x']
+    data_snv_x = omics_dict['data_snv_x']
+
+    if isinstance(labels, pd.DataFrame):
+        if labels.shape[1] != 1:
+            raise ValueError("labels DataFrame must contain exactly one label column")
+        label_series = labels.iloc[:, 0].copy()
+    else:
+        label_series = labels.copy()
+
+    sample_ids = [str(sample_id) for sample_id in omics_dict['sample_ids']]
+    label_series.index = label_series.index.map(str)
+
+    missing_labels = set(sample_ids) - set(label_series.index)
+    if missing_labels:
+        raise ValueError(f"labels are missing {len(missing_labels)} aligned samples")
+
+    label_series = label_series.loc[sample_ids]
+
+    np.random.seed(seed)
+    indices = np.random.permutation(range(len(label_series)))
+
+    X_rna = torch.tensor(data_geo_x.values, dtype=torch.float)
+    X_meth = torch.tensor(data_meth_x.values, dtype=torch.float)
+    X_cnv = torch.tensor(data_cnv_x.values, dtype=torch.float)
+    X_snv = torch.tensor(data_snv_x.values, dtype=torch.float)
+    Y = torch.tensor(label_series.values, dtype=torch.int)
+
+    fold_size = X_rna.shape[0] // k
+
+    X_train_rna, X_test_rna = None, None
+    X_train_meth, X_test_meth = None, None
+    X_train_cnv, X_test_cnv = None, None
+    X_train_snv, X_test_snv = None, None
+    Y_train, Y_test = None, None
+
+    for j in range(k):
+        idx = indices[j * fold_size:(j + 1) * fold_size]
+
+        X_part_rna = X_rna[idx, :]
+        X_part_meth = X_meth[idx, :]
+        X_part_cnv = X_cnv[idx, :]
+        X_part_snv = X_snv[idx, :]
+        y_part = Y[idx]
+
+        if j == i:
+            X_test_rna = X_part_rna
+            X_test_meth = X_part_meth
+            X_test_cnv = X_part_cnv
+            X_test_snv = X_part_snv
+            Y_test = y_part
+        elif X_train_rna is None:
+            X_train_rna = X_part_rna
+            X_train_meth = X_part_meth
+            X_train_cnv = X_part_cnv
+            X_train_snv = X_part_snv
+            Y_train = y_part
+        else:
+            X_train_rna = torch.cat((X_train_rna, X_part_rna), dim=0)
+            X_train_meth = torch.cat((X_train_meth, X_part_meth), dim=0)
+            X_train_cnv = torch.cat((X_train_cnv, X_part_cnv), dim=0)
+            X_train_snv = torch.cat((X_train_snv, X_part_snv), dim=0)
+            Y_train = torch.cat((Y_train, y_part), dim=0)
+
+    data.X_train_rna = X_train_rna
+    data.X_test_rna = X_test_rna
+    data.X_train_meth = X_train_meth
+    data.X_test_meth = X_test_meth
+    data.X_train_cnv = X_train_cnv
+    data.X_test_cnv = X_test_cnv
+    data.X_train_snv = X_train_snv
+    data.X_test_snv = X_test_snv
+    data.Y_train = Y_train
+    data.Y_test = Y_test
+
+    return data
+
 class pgb():
     def __init__(self,signalObj,min_value,max_value):
         self.min_value = min_value
