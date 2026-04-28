@@ -186,6 +186,72 @@ class GraphCNN(nn.Module):
         loss = F.nll_loss(out[data.train_mask],data.y[data.train_mask].long())
         return out,loss
     
+class MethylationEncoder(nn.Module):
+    def __init__(self, input_dim):
+        super(MethylationEncoder, self).__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, 500),
+            nn.BatchNorm1d(500),
+            nn.LeakyReLU(0.2),
+            nn.Dropout(0.3),
+            nn.Linear(500, 300)
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
+class CNVEncoder(nn.Module):
+    def __init__(self, input_dim):
+        super(CNVEncoder, self).__init__()
+        self.input_norm = nn.BatchNorm1d(input_dim)
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, 500),
+            nn.BatchNorm1d(500),
+            nn.LeakyReLU(0.2),
+            nn.Dropout(0.3),
+            nn.Linear(500, 300)
+        )
+
+    def forward(self, x):
+        return self.net(self.input_norm(x))
+
+
+class SNVEncoder(nn.Module):
+    def __init__(self, input_dim):
+        super(SNVEncoder, self).__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, 1000),
+            nn.BatchNorm1d(1000),
+            nn.LeakyReLU(0.2),
+            nn.Dropout(0.5),
+            nn.Linear(1000, 300)
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
+class OmicsFusion(nn.Module):
+    def __init__(self, latent_dim=300, num_omics=4):
+        super(OmicsFusion, self).__init__()
+        self.gates = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(latent_dim, latent_dim),
+                nn.Sigmoid()
+            )
+            for _ in range(num_omics)
+        ])
+        self.out_proj = nn.Linear(latent_dim, latent_dim)
+        self.norm = nn.BatchNorm1d(latent_dim)
+
+    def forward(self, z_rna, z_meth, z_cnv, z_snv):
+        z_list = [z_rna, z_meth, z_cnv, z_snv]
+        gated = [gate(z) * z for gate, z in zip(self.gates, z_list)]
+        fused = torch.stack(gated, dim=0).sum(dim=0)
+        return self.norm(self.out_proj(fused))
+
+
 class Model(nn.Module):
     def __init__(self,data_geo_x_shape,num_muti_gat,num_muti_mlp,num_node_features,data_x_N):
         super(Model, self).__init__()
