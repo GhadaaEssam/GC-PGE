@@ -27,6 +27,7 @@ class MutiGAT(nn.Module):
         # self.graph_list = nn.ModuleList(self.graph_list)
         self.CrossEntropyLoss = nn.CrossEntropyLoss()
         self.generalization = GeneralizationGraph(embedding_dim = 4,data_x_shape = data_x_N,num_node_features=num_node_features)
+
     def forward(self,data):
         out = torch.zeros_like(data.y)
         loss = torch.Tensor([0.]).to(next(self.parameters()).device)
@@ -124,7 +125,7 @@ class ConcreteDropout(nn.Module):
 class VariableDropoutMLP(nn.Module):
     def __init__(self,data_x_shape,temp= 1.0/10.0):
         super().__init__()
-        self.model = nn.Sequential(
+        self.feature_extractor = nn.Sequential(
             nn.Linear(data_x_shape,1000),  #3000
             nn.BatchNorm1d(1000),
             nn.Dropout(0.9),#0.9
@@ -137,9 +138,8 @@ class VariableDropoutMLP(nn.Module):
             nn.BatchNorm1d(300),
             nn.Dropout(0.8),#0.8
             nn.LeakyReLU(),
-            nn.Linear(300,2),
-            
         )
+        self.classifier = nn.Linear(300,2)
         self.temp = temp
     def forward(self,x,vimp):
         if self.training:
@@ -157,11 +157,12 @@ class VariableDropoutMLP(nn.Module):
         approx_output = torch.sigmoid(approx / self.temp)
 
         # out = self.model(x*torch.ones_like(approx_output))
-        out = self.model(x*( approx_output))
+        h = self.feature_extractor(x*( approx_output))
+        out = self.classifier(h)
         out = F.log_softmax(out, dim=1)
         # loss = F.nll_loss(out, y.long())
         # output = out.max(dim=1).indices
-        return out
+        return out,h
 
 
 # create the graph cnn model
@@ -263,12 +264,47 @@ class Model(nn.Module):
         for i in range(num_muti_mlp):
             self.vdMLP_list.append(VariableDropoutMLP(data_x_shape=data_geo_x_shape[1]))
         self.vdMLP_list = nn.ModuleList(self.vdMLP_list)
-    def forward(self,data,data_geo_x):
+
+        # optional multi-omics branch
+        self.enc_meth = MethylationEncoder(data_geo_x_shape[1])
+        self.enc_cnv = CNVEncoder(data_geo_x_shape[1])
+        self.enc_snv = SNVEncoder(data_geo_x_shape[1])
+        self.fusion = OmicsFusion(latent_dim=300, num_omics=4)
+        self.final_classifier = nn.Sequential(
+            nn.Linear(300, 64),
+            nn.BatchNorm1d(64),
+            nn.LeakyReLU(0.2),
+            nn.Dropout(0.3),
+            nn.Linear(64, 2),
+            nn.LogSoftmax(dim=1)
+        )
+
+    def forward(self,data,data_geo_x,x_meth=None, x_cnv=None, x_snv=None):
         vimp,loss_mutiGAT,out_graph,graph,pw_w = self.mutiGAT(data)
         out = torch.zeros([data_geo_x.shape[0],2]).to(next(self.parameters()).device)
+        z_rna_list = []
         for module in self.vdMLP_list:
-            temp = module(data_geo_x,out_graph)
+            temp,h = module(data_geo_x,out_graph)
             out = out + temp.exp()
+            z_rna_list.append(h)
 
+        out_mlp_avg = torch.log(out/self.num_muti_mlp)
+        z_rna = torch.stack(z_rna_list, dim=0).mean(dim=0)
         loss_L1 = torch.mean(torch.pow(out_graph,2))
-        return {'out':torch.log(out/self.num_muti_mlp),'vimp_g':out_graph,'loss_mutiGAT':loss_mutiGAT,'loss_L1':loss_L1,'graph':graph,'temp':temp,'pw_w':pw_w,'cor':vimp}
+        result = {'out':out_mlp_avg,'vimp_g':out_graph,'loss_mutiGAT':loss_mutiGAT,'loss_L1':loss_L1,'graph':graph,'temp':temp,'pw_w':pw_w,'cor':vimp}
+
+        # optional multi-omics branch
+        if x_meth is not None and x_cnv is not None and x_snv is not None:
+            z_meth = self.enc_meth(x_meth)
+            z_cnv = self.enc_cnv(x_cnv)
+            z_snv = self.enc_snv(x_snv)
+
+            # fuses the 4 omics representations using the OmicsFusion module
+            z_fused = self.fusion(z_rna, z_meth, z_cnv, z_snv)
+
+            # final classification based on the fused representation
+            out_multiomics = self.final_classifier(z_fused)
+            result['out_multiomics'] = out_multiomics
+            result['z_rna'] = z_rna
+        
+        return result

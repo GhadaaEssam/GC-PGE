@@ -23,8 +23,6 @@ def get_metrics(out_, edge_label_):
     out = out_.detach().cpu().numpy()
     edge_label = edge_label_.detach().cpu().numpy()
 
-
-
     pred = (out > 0.5).astype(int)
     auc = roc_auc_score(edge_label, out)
     f1 = f1_score(edge_label, pred)
@@ -43,8 +41,6 @@ def test(model,data,data_geo):
     temp=result['temp']
     cor=result['cor']
 
-
-
     out = out.max(dim=1).indices
     temp = temp.max(dim=1).indices
 
@@ -57,7 +53,6 @@ def test(model,data,data_geo):
     auc_temp,_,_ ,_= get_metrics(temp,data_geo.Y_test)
     auc_geo_train,_,_,_ = get_metrics(out_train,data_geo.Y_train)
     
-
     model.train()
     # return auc, f1, ap, auc_geo,auc_geo_train,auc_temp,f1_geo,ap_geo
     return {'auc':auc,'f1':f1,'ap':ap,'auc_geo':auc_geo,'auc_geo_train':auc_geo_train,'auc_temp':auc_temp,'f1_geo':f1_geo,'ap_geo':ap_geo,'acc_geo':acc_geo,'cor':auc1}
@@ -90,18 +85,12 @@ def train_model(data_geo, label_geo, anchor_list, data_x, data_ppi_link_index, d
     pgb2 = pgb(progressBarObj,20,40)
     train_edge_homolog , _ = get_train_edge(data_homolog_index, train_anchor,pgb2)
     
-
-
     data_obj = make_data(data_x,train_edge_ppi,train_edge_homolog,anchor_list,test_anchor)
-
 
     #os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # 配置GPU
     
     df_acc = pd.DataFrame(columns=('epoch','auc_geo','auc_train','auc','loss'))
     
-    
-    
-
     my_net = Model(data_geo_x_shape=data_geo_obj.X_train.shape,num_muti_gat=8,num_muti_mlp=5,num_node_features=data_obj.num_node_features,data_x_N=data_obj.train_mask.shape[0])
     # my_net = GraphCNN(in_c=data_obj.num_node_features, hid_c=8, out_c=2)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")   # 检查设备
@@ -128,9 +117,6 @@ def train_model(data_geo, label_geo, anchor_list, data_x, data_ppi_link_index, d
         torch.seed()
         mixed_x = lam * data_geo_obj.X_train + (1 - lam) * data_geo_obj.X_train[index, :]
 
-
-
-        
         result = my_net(data,mixed_x)  # 预测结果
         out=result['out']
         loss_mutiGAT=result['loss_mutiGAT']
@@ -142,7 +128,6 @@ def train_model(data_geo, label_geo, anchor_list, data_x, data_ppi_link_index, d
         # out,_,loss_mutiGAT,loss_L1,_ = my_net(data,data_geo_obj.X_train)  # 预测结果
         # loss =  0.1*loss_mutiGAT +0.1*loss_L1 + 1.0*F.nll_loss(out, data_geo_obj.Y_train.long())
 
-
         loss.backward()
         optimizer.step()  # 优化器
         # scheduler.step()
@@ -150,8 +135,6 @@ def train_model(data_geo, label_geo, anchor_list, data_x, data_ppi_link_index, d
         print("epoch:{},auc_geo:{},auc_train:{},auc:{},cor:{},ap:{},loss:{},auc_temp:{},num:{}".format(epoch + 1,test_['auc_geo'],test_['auc_geo_train'], test_['auc'], test_['cor'], test_['ap'] , loss.item(),test_['auc_temp'],num))
         df_acc=df_acc.append(pd.DataFrame({'epoch':[epoch],'auc_geo':[test_['auc_geo']],'auc_train':[test_['auc_geo_train']],'f1_geo':[test_['f1_geo']],'ap_geo':test_['ap_geo'],'auc':[test_['auc']],'cor':[test_['cor']],'loss':[loss.item()],'auc_temp':[test_['auc_temp']],'acc_geo':[test_['acc_geo']]}),ignore_index=True)
         pgb3.update((epoch+1)/epoches)
-
-
         
         # if  test_['auc_geo_train'] > 0.99 and epoch>=235: #and epoch>=250 
         #     num = num - 1
@@ -170,14 +153,10 @@ def train_model(data_geo, label_geo, anchor_list, data_x, data_ppi_link_index, d
         if (num == 0 and auc_stock <= test_['auc_geo_train']):
             print("###")
             break
-        
 
     my_net.eval()
 
-
-    
     torch.save(my_net,"result/model.pt")
-
     result = my_net(data,data_geo_obj.X_test)
     pd.DataFrame({"predict":result['cor'].detach().cpu()}).to_csv("result/predict_muti_all.csv",index=False)
     pd.DataFrame({"predict":result['out'].max(dim=1).indices.detach().cpu()}).to_csv("result/predict_out.csv",index=False)
