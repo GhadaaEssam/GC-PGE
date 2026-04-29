@@ -214,6 +214,8 @@ class pgb():
     def update(self,n_value):
         self.signalObj.emit(int(n_value*self.scale + self.min_value))
         
+
+
 def make_data_geo(data_geo, label_geo,k,i,seed):
     assert k > 1
     
