@@ -2,6 +2,7 @@ import torch
 from torch_geometric.data import Data
 import pandas as pd
 import random
+from sklearn.utils import resample
 from sklearn import model_selection
 import numpy as np
 
@@ -121,6 +122,8 @@ def load_multiomics(
         'gene_ids': data_geo_x.columns.to_list(),
     }
 
+
+
 def make_data_multiomics(omics_dict, labels, k, i, seed=42):
     assert k > 1
 
@@ -148,14 +151,45 @@ def make_data_multiomics(omics_dict, labels, k, i, seed=42):
     label_series = label_series.loc[sample_ids]
 
     np.random.seed(seed)
-    indices = np.random.permutation(range(len(label_series)))
-
+    # indices = np.random.permutation(range(len(label_series)))
+    
+    # --- 1. THE STRATIFIED SHUFFLE (Fixes the NaN Crash!) ---
+    # Find where the Sensitive (0) and Resistant (1) patients are
+    idx_sensitive = np.where(label_series.values == 0)[0]
+    idx_resistant = np.where(label_series.values == 1)[0]
+    
+    np.random.shuffle(idx_sensitive)
+    np.random.shuffle(idx_resistant)
+    
+    # Create empty "piles" for each fold
+    piles = [[] for _ in range(k)]
+    
+    # Deal the Resistant patients evenly across the k piles
+    for count, idx in enumerate(idx_resistant):
+        piles[count % k].append(idx)
+        
+    # Deal the Sensitive patients evenly across the k piles
+    for count, idx in enumerate(idx_sensitive):
+        piles[count % k].append(idx)
+        
+    # Combine the piles back into the single 1D array the authors' loop expects
+    indices = []
+    for p in piles:
+        indices.extend(p)
+    indices = np.array(indices)
+    
+    
     X_rna = torch.tensor(data_geo_x.values, dtype=torch.float)
     X_meth = torch.tensor(data_meth_x.values, dtype=torch.float)
     X_cnv = torch.tensor(data_cnv_x.values, dtype=torch.float)
     X_snv = torch.tensor(data_snv_x.values, dtype=torch.float)
-    Y = torch.tensor(label_series.values, dtype=torch.int)
+    
+    # Ensure labels are Long tensors for classification
+    Y = torch.tensor(label_series.values, dtype=torch.long) 
 
+    # =================================================================
+    # --- 1. ORIGINAL AUTHORS' K-FOLD LOOP ---
+    # =================================================================
     fold_size = X_rna.shape[0] // k
 
     X_train_rna, X_test_rna = None, None
@@ -192,15 +226,46 @@ def make_data_multiomics(omics_dict, labels, k, i, seed=42):
             X_train_snv = torch.cat((X_train_snv, X_part_snv), dim=0)
             Y_train = torch.cat((Y_train, y_part), dim=0)
 
-    data.X_train_rna = X_train_rna
+    # =================================================================
+    # --- 2. ISOLATED OVERSAMPLING (Applied to the loop's output) ---
+    # =================================================================
+    # Convert Y_train to numpy array to find the exact local indices
+    Y_train_np = Y_train.numpy()
+    
+    idx_sensitive = np.where(Y_train_np == 0)[0]
+    idx_resistant = np.where(Y_train_np == 1)[0]
+    
+    # Upsample the Resistant minority to match the Sensitive majority
+    idx_resistant_upsampled = resample(
+        idx_resistant, 
+        replace=True,          
+        n_samples=len(idx_sensitive), 
+        random_state=seed
+    )
+    
+    # Combine the indices and shuffle them
+    balanced_idx_train = np.concatenate([idx_sensitive, idx_resistant_upsampled])
+    np.random.shuffle(balanced_idx_train) 
+    
+    print(f"🧬 Fold {i+1}/{k} Setup Complete (Original Loop Logic)!")
+    print(f"   - Training on: {len(idx_sensitive)} Sensitive & {len(idx_resistant_upsampled)} Resistant (Upsampled)")
+    print(f"   - Testing on : {len(Y_test)} unseen patients")
+
+    # =================================================================
+    # --- 3. ATTACH TO DATA OBJECT ---
+    # =================================================================
+    # Use the balanced indices to rearrange and duplicate the training tensors
+    data.X_train_rna = X_train_rna[balanced_idx_train]
+    data.X_train_meth = X_train_meth[balanced_idx_train]
+    data.X_train_cnv = X_train_cnv[balanced_idx_train]
+    data.X_train_snv = X_train_snv[balanced_idx_train]
+    data.Y_train = Y_train[balanced_idx_train]
+
+    # The test tensors remain completely untouched!
     data.X_test_rna = X_test_rna
-    data.X_train_meth = X_train_meth
     data.X_test_meth = X_test_meth
-    data.X_train_cnv = X_train_cnv
     data.X_test_cnv = X_test_cnv
-    data.X_train_snv = X_train_snv
     data.X_test_snv = X_test_snv
-    data.Y_train = Y_train
     data.Y_test = Y_test
 
     return data

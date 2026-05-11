@@ -66,7 +66,8 @@ def test(model, data, data_geo):
         'acc_geo': acc_geo, 'cor': auc1
     }
     
-def train_model(data_geo, label_geo, anchor_list, data_x, data_ppi_link_index, data_homolog_index,progressBarObj):
+# ADDED current_fold=0 so the function can track the loop
+def train_model(data_geo, label_geo, anchor_list, data_x, data_ppi_link_index, data_homolog_index,progressBarObj, current_fold=0):
     
     if os.path.exists('result/'):
         pass
@@ -96,8 +97,8 @@ def train_model(data_geo, label_geo, anchor_list, data_x, data_ppi_link_index, d
         sample_ids=valid_patients  # Pass the safe list here!
     )
     
-    # 3. Create the multi-omics data object (this replaces make_data_geo)
-    data_geo_obj = make_data_multiomics(omics_dict, label_geo, k=10, i=4, seed=4709)
+    # CONNECTED TO LOOP: Changed k=10 to k=5, and i=4 to i=current_fold
+    data_geo_obj = make_data_multiomics(omics_dict, label_geo, k=5, i=current_fold, seed=4709)
     # -------------------------------
 
     anchor_index = anchor_list.result_num[anchor_list.result_num==1].index
@@ -128,7 +129,7 @@ def train_model(data_geo, label_geo, anchor_list, data_x, data_ppi_link_index, d
     my_net = my_net.to(device)  
     data = data_obj.to(device)  
     data_geo_obj = data_geo_obj.to(device)
-    optimizer = torch.optim.Adam(my_net.parameters(), lr=0.005)  # 优化器
+    optimizer = torch.optim.Adam(my_net.parameters(), lr=0.0005, weight_decay=1e-2)  # 优化器
     # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.93303)
     alpha = 0.5
     auc_stock = 0.0
@@ -224,20 +225,20 @@ def train_model(data_geo, label_geo, anchor_list, data_x, data_ppi_link_index, d
 
     my_net.eval()
 
-    # Save as a NEW file name
-    torch.save(my_net,"result/model_multiomics.pt")
+    # ADDED THE FOLD NUMBERS SO FILES DON'T OVERWRITE EACH OTHER
+    torch.save(my_net, f"result/model_multiomics_Fold_{current_fold+1}.pt")
     
     # Pass all 4 test datasets for the final CSV export
     result = my_net(data, data_geo_obj.X_test_rna, x_meth=data_geo_obj.X_test_meth, x_cnv=data_geo_obj.X_test_cnv, x_snv=data_geo_obj.X_test_snv)
     
-    pd.DataFrame({"predict":result['cor'].detach().cpu()}).to_csv("result/predict_muti_all.csv",index=False)
+    pd.DataFrame({"predict":result['cor'].detach().cpu()}).to_csv(f"result/predict_muti_all_Fold_{current_fold+1}.csv",index=False)
     
     # Save the MULTI-OMICS prediction, not the old RNA one
-    pd.DataFrame({"predict":result['out_multiomics'].max(dim=1).indices.detach().cpu()}).to_csv("result/predict_out.csv",index=False)
+    pd.DataFrame({"predict":result['out_multiomics'].max(dim=1).indices.detach().cpu()}).to_csv(f"result/predict_out_Fold_{current_fold+1}.csv",index=False)
     
-    pd.DataFrame(result['graph'].detach().cpu().numpy()).to_csv("result/graph.csv")
-    pd.DataFrame({"predict":result['pw_w'].detach().cpu()}).to_csv("result/pw_w.csv",index=False)
-    df_acc.to_csv("result/lossAndAcc.csv")
+    pd.DataFrame(result['graph'].detach().cpu().numpy()).to_csv(f"result/graph_Fold_{current_fold+1}.csv")
+    pd.DataFrame({"predict":result['pw_w'].detach().cpu()}).to_csv(f"result/pw_w_Fold_{current_fold+1}.csv",index=False)
+    df_acc.to_csv(f"result/lossAndAcc_Fold_{current_fold+1}.csv")
 
     progressBarObj.setValue(int(100))
     
@@ -265,8 +266,11 @@ if __name__ == "__main__":
     data_ppi = pd.read_csv(r'data/ppi_final_edge_list.csv', header=0)
     data_homolog = pd.read_csv(r'data/homology_final_edge_list.csv', header=0)
     
-    # 3. Pull the trigger! 
-    # (We pass 'None' for the first two arguments because you already wrote 
-    # the code to load the Omics and Labels directly inside the function!)
-    print("🧠 Initializing Deep Learning sequence...")
-    train_model(None, None, anchor_list, data_x, data_ppi, data_homolog, dummy_pgb)
+    # 3. Pull the trigger on the 5-Fold Loop! 
+    for current_fold in range(5):
+        print(f"\n=======================================================")
+        print(f"🚀 STARTING FOLD {current_fold + 1} OF 5")
+        print(f"=======================================================")
+        train_model(None, None, anchor_list, data_x, data_ppi, data_homolog, dummy_pgb, current_fold)
+        
+    print("\n✅ All 5 Folds Complete!")
