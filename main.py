@@ -3,8 +3,8 @@ from PyQt6.QtWidgets import QApplication, QMainWindow, QLabel, QVBoxLayout, QWid
 from PyQt6.QtCore import pyqtSignal, QObject, QAbstractTableModel, Qt,QThread
 from PyQt6 import QtGui as qg
 from gui.form_ui import Ui_MainWindow
-from model.train import train_model
-from model.predict import predict_model
+from train import train_model
+from predict import predict_model
 from PyQt6.QtCore import QSettings
 import pandas as pd
 from PyQt6.QtGui import QTextCursor
