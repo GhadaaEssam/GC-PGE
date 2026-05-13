@@ -230,36 +230,42 @@ def make_data_multiomics(omics_dict, labels, k, i, seed=42):
     # --- 2. ISOLATED OVERSAMPLING (Applied to the loop's output) ---
     # =================================================================
     # Convert Y_train to numpy array to find the exact local indices
-    Y_train_np = Y_train.numpy()
+    # Y_train_np = Y_train.numpy()
     
-    idx_sensitive = np.where(Y_train_np == 0)[0]
-    idx_resistant = np.where(Y_train_np == 1)[0]
+    # idx_sensitive = np.where(Y_train_np == 0)[0]
+    # idx_resistant = np.where(Y_train_np == 1)[0]
     
-    # Upsample the Resistant minority to match the Sensitive majority
-    idx_resistant_upsampled = resample(
-        idx_resistant, 
-        replace=True,          
-        n_samples=len(idx_sensitive), 
-        random_state=seed
-    )
+    # # Upsample the Resistant minority to match the Sensitive majority
+    # idx_resistant_upsampled = resample(
+    #     idx_resistant, 
+    #     replace=True,          
+    #     n_samples=len(idx_sensitive), 
+    #     random_state=seed
+    # )
     
-    # Combine the indices and shuffle them
-    balanced_idx_train = np.concatenate([idx_sensitive, idx_resistant_upsampled])
-    np.random.shuffle(balanced_idx_train) 
+    # # Combine the indices and shuffle them
+    # balanced_idx_train = np.concatenate([idx_sensitive, idx_resistant_upsampled])
+    # np.random.shuffle(balanced_idx_train) 
     
-    print(f"🧬 Fold {i+1}/{k} Setup Complete (Original Loop Logic)!")
-    print(f"   - Training on: {len(idx_sensitive)} Sensitive & {len(idx_resistant_upsampled)} Resistant (Upsampled)")
-    print(f"   - Testing on : {len(Y_test)} unseen patients")
-
+    # print(f"🧬 Fold {i+1}/{k} Setup Complete (Original Loop Logic)!")
+    # print(f"   - Training on: {len(idx_sensitive)} Sensitive & {len(idx_resistant_upsampled)} Resistant (Upsampled)")
+    # print(f"   - Testing on : {len(Y_test)} unseen patients")
+    
     # =================================================================
     # --- 3. ATTACH TO DATA OBJECT ---
     # =================================================================
     # Use the balanced indices to rearrange and duplicate the training tensors
-    data.X_train_rna = X_train_rna[balanced_idx_train]
-    data.X_train_meth = X_train_meth[balanced_idx_train]
-    data.X_train_cnv = X_train_cnv[balanced_idx_train]
-    data.X_train_snv = X_train_snv[balanced_idx_train]
-    data.Y_train = Y_train[balanced_idx_train]
+    # data.X_train_rna = X_train_rna[balanced_idx_train]
+    # data.X_train_meth = X_train_meth[balanced_idx_train]
+    # data.X_train_cnv = X_train_cnv[balanced_idx_train]
+    # data.X_train_snv = X_train_snv[balanced_idx_train]
+    # data.Y_train = Y_train[balanced_idx_train]
+    
+    data.X_train_rna = X_train_rna
+    data.X_train_meth = X_train_meth
+    data.X_train_cnv = X_train_cnv
+    data.X_train_snv = X_train_snv
+    data.Y_train = Y_train
 
     # The test tensors remain completely untouched!
     data.X_test_rna = X_test_rna

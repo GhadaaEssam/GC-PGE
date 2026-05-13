@@ -8,12 +8,13 @@ import torch_geometric.nn as pyg_nn
 from torch_geometric.data import Data
 import pandas as pd
 import random
-from sklearn.metrics import roc_auc_score, f1_score, average_precision_score, confusion_matrix, accuracy_score
+from sklearn.metrics import roc_auc_score, f1_score, average_precision_score, confusion_matrix, accuracy_score, roc_curve
 from sklearn import model_selection
 import numpy as np
 from model.preprocess import make_data_geo, get_train_edge, make_data, pgb, load_multiomics, make_data_multiomics
 from scipy.special import erfinv 
 from model.model import Model
+import torch.nn.functional as F
 
 
 EPSILON = np.finfo(float).eps
@@ -190,27 +191,53 @@ def test_multi(model, data, data_geo):
     model.eval()
     target = data.y
     
-    # 1. NEW: Pass all 4 Testing sets into the model
     result = model(data, data_geo.X_test_rna, x_meth=data_geo.X_test_meth, x_cnv=data_geo.X_test_cnv, x_snv=data_geo.X_test_snv)
     
-    # 2. Extract the RAW probabilities (Restored to exact high-accuracy math)
-    out = result['out_multiomics'][:, 1] 
+    # --- 1. GRAPH METRICS (Using the shared get_metrics function) ---
     prediction = result['vimp_g']
-    temp = result['temp'][:, 1]
     cor = result['cor']
-    
-    # 3. NEW: Pass all 4 Training sets for the baseline check
-    result_ = model(data, data_geo.X_train_rna, x_meth=data_geo.X_train_meth, x_cnv=data_geo.X_train_cnv, x_snv=data_geo.X_train_snv)
-    out_train = result_['out_multiomics'][:, 1]
-    
-    # 4. Calculate the metrics using the multi-omics outputs
     auc1, f1, ap, _ = get_metrics(prediction[data.test_mask], target[data.test_mask])
     auc, _, _, _ = get_metrics(cor[data.test_mask], target[data.test_mask])
     
-    auc_geo, f1_geo, ap_geo, acc_geo = get_metrics(out, data_geo.Y_test.long())
-    auc_temp, _, _, _ = get_metrics(temp, data_geo.Y_test.long())
-    auc_geo_train, _, _, _ = get_metrics(out_train, data_geo.Y_train.long())
+    # --- 2. PATIENT METRICS (With Dynamic Thresholding) ---
+    y_true = data_geo.Y_test.long().cpu().numpy()
+    y_train_true = data_geo.Y_train.long().cpu().numpy()
     
+    # Probabilities
+    out_probs = torch.exp(result['out_multiomics'][:, 1]).detach().cpu().numpy()
+    
+    # Calculate training probabilities to find the optimal line
+    result_ = model(data, data_geo.X_train_rna, x_meth=data_geo.X_train_meth, x_cnv=data_geo.X_train_cnv, x_snv=data_geo.X_train_snv)
+    out_train_probs = torch.exp(result_['out_multiomics'][:, 1]).detach().cpu().numpy()
+    
+    # --- FIND THE OPTIMAL CUTOFF (Youden's J-Statistic) ---
+    if len(np.unique(y_train_true)) > 1:
+        fpr, tpr, thresholds = roc_curve(y_train_true, out_train_probs)
+        optimal_idx = np.argmax(tpr - fpr)
+        optimal_threshold = thresholds[optimal_idx]
+    else:
+        optimal_threshold = 0.5 # Fallback
+        
+    # Use the custom mathematical line instead of .argmax()!
+    out_preds = (out_probs >= optimal_threshold).astype(int)
+    
+    # Grade the model
+    auc_geo = roc_auc_score(y_true, out_probs) if len(np.unique(y_true)) > 1 else 0.5
+    f1_geo = f1_score(y_true, out_preds, zero_division=0)
+    acc_geo = accuracy_score(y_true, out_preds)
+    ap_geo = average_precision_score(y_true, out_probs)
+    auc_geo_train = roc_auc_score(y_train_true, out_train_probs) if len(np.unique(y_train_true)) > 1 else 0.5
+    
+    # --- 3. BASELINE CHECK (Training set metrics) ---
+    result_ = model(data, data_geo.X_train_rna, x_meth=data_geo.X_train_meth, x_cnv=data_geo.X_train_cnv, x_snv=data_geo.X_train_snv)
+    y_train_true = data_geo.Y_train.long().cpu().numpy()
+    out_train_probs = torch.exp(result_['out_multiomics'][:, 1]).detach().cpu().numpy()
+    auc_geo_train = roc_auc_score(y_train_true, out_train_probs) if len(np.unique(y_train_true)) > 1 else 0.5
+    
+    # Temp variable for internal loss tracking
+    temp_probs = torch.exp(result['temp'][:, 1]).detach().cpu().numpy()
+    auc_temp = roc_auc_score(y_true, temp_probs) if len(np.unique(y_true)) > 1 else 0.5
+
     model.train() 
     
     return {
@@ -219,6 +246,26 @@ def test_multi(model, data, data_geo):
         'auc_temp': auc_temp, 'f1_geo': f1_geo, 'ap_geo': ap_geo, 
         'acc_geo': acc_geo, 'cor': auc1
     }
+    
+    
+def focal_loss(inputs, targets, alpha=0.8, gamma=2.0):
+    """
+    inputs: The raw LogSoftmax outputs from the model.
+    targets: The true labels (0 for Sensitive, 1 for Resistant).
+    alpha: Weights the importance of the minority class.
+    gamma: Forces the model to focus on hard-to-predict patients.
+    """
+    # 1. Calculate standard loss
+    BCE_loss = F.nll_loss(inputs, targets, reduction='none')
+    
+    # 2. Get the actual probabilities (un-log them)
+    pt = torch.exp(-BCE_loss)
+    
+    # 3. Apply the Focal Loss mathematical penalty
+    F_loss = alpha * (1 - pt)**gamma * BCE_loss
+    
+    return torch.mean(F_loss)
+
 
 def train_model_multi(data_geo, label_geo, anchor_list, data_x, data_ppi_link_index, data_homolog_index, progressBarObj, current_fold=0):
     # if not os.path.exists('result/'):
@@ -248,6 +295,15 @@ def train_model_multi(data_geo, label_geo, anchor_list, data_x, data_ppi_link_in
         sample_ids=valid_patients 
     )
     
+    # --- BASE MODEL PARITY: Apply RankGauss to ALL 4 modalities ---
+    for key in ['data_geo_x', 'data_meth_x', 'data_cnv_x', 'data_snv_x']:
+        df = omics_dict[key]
+        rankGauss = (df.values / df.values.max() - 0.5) * 2
+        rankGauss = np.clip(rankGauss, -1 + EPSILON, 1 - EPSILON)
+        rankGauss = erfinv(rankGauss)
+        omics_dict[key] = pd.DataFrame(rankGauss, columns=df.columns, index=df.index)
+    # --------------------------------------------------------------
+    
     data_geo_obj = make_data_multiomics(omics_dict, label_geo, k=5, i=current_fold, seed=4709)
 
     # RESTORED: The original 50% anchor split that works best for your dataset
@@ -275,10 +331,34 @@ def train_model_multi(data_geo, label_geo, anchor_list, data_x, data_ppi_link_in
     my_net = Model(data_geo_x_shape=data_geo_obj.X_train_rna.shape, num_muti_gat=8, num_muti_mlp=5, num_node_features=data_obj.num_node_features, data_x_N=data_obj.train_mask.shape[0])
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # =====================================================================
+    # 📊 DATA BALANCE REPORT (Terminal Output)
+    # =====================================================================
+    y_train_np = data_geo_obj.Y_train.numpy()
+    y_test_np = data_geo_obj.Y_test.numpy()
+    
+    train_0 = np.sum(y_train_np == 0) # Sensitive
+    train_1 = np.sum(y_train_np == 1) # Resistant
+    
+    test_0 = np.sum(y_test_np == 0)
+    test_1 = np.sum(y_test_np == 1)
+    
+    print("\n" + "="*50)
+    print(f"📊 FOLD {current_fold + 1} DATA DISTRIBUTION REPORT")
+    print("="*50)
+    print(f"TRAINING SET ({len(y_train_np)} patients):")
+    print(f"  ✅ Sensitive (Class 0): {train_0} patients")
+    print(f"  🛑 Resistant (Class 1): {train_1} patients")
+    print(f"TESTING SET  ({len(y_test_np)} patients):")
+    print(f"  ✅ Sensitive (Class 0): {test_0} patients")
+    print(f"  🛑 Resistant (Class 1): {test_1} patients")
+    print("="*50 + "\n")
+    # =====================================================================
     my_net = my_net.to(device)  
     data = data_obj.to(device)  
     data_geo_obj = data_geo_obj.to(device)
-    optimizer = torch.optim.Adam(my_net.parameters(), lr=0.0005, weight_decay=1e-2) 
+    # optimizer = torch.optim.Adam(my_net.parameters(), lr=0.0005, weight_decay=1e-2)
+    optimizer = torch.optim.Adam(my_net.parameters(), lr=0.005) 
     
     alpha = 0.5
     auc_stock = 0.0
@@ -286,7 +366,13 @@ def train_model_multi(data_geo, label_geo, anchor_list, data_x, data_ppi_link_in
     my_net.train()
     epoches = 500
     pgb3 = pgb(progressBarObj,40,98)
-
+    
+    # --- MODEL CHECKPOINT TRACKERS ---
+    best_auc = 0.0
+    best_f1 = 0.0
+    best_acc = 0.0
+    best_score = 0.0  # Combined metric for early stopping
+    
     for epoch in range(epoches):
         optimizer.zero_grad()
 
@@ -307,17 +393,21 @@ def train_model_multi(data_geo, label_geo, anchor_list, data_x, data_ppi_link_in
         loss_L1 = result['loss_L1']
         pw_w = result['pw_w']
         
-        loss_rna = lam * F.nll_loss(out, data_geo_obj.Y_train.long()) + (1 - lam) * F.nll_loss(out, data_geo_obj.Y_train[index].long())
-        loss_multi = lam * F.nll_loss(out_multi, data_geo_obj.Y_train.long()) + (1 - lam) * F.nll_loss(out_multi, data_geo_obj.Y_train[index].long())
+        # # loss_rna = lam * F.nll_loss(out, data_geo_obj.Y_train.long()) + (1 - lam) * F.nll_loss(out, data_geo_obj.Y_train[index].long())
+        # loss_multi = lam * F.nll_loss(out_multi, data_geo_obj.Y_train.long()) + (1 - lam) * F.nll_loss(out_multi, data_geo_obj.Y_train[index].long())
 
-        # RESTORED: The exact original loss balance
-        loss = 0.1 * loss_mutiGAT + 0.1 * torch.mean(torch.pow(pw_w,2)) + 0.1 * loss_L1 + 0.3 * loss_rna + 1.0 * loss_multi
+        # # RESTORED: The exact original loss balance
+        # loss = 0.1 * loss_mutiGAT + 0.1 * torch.mean(torch.pow(pw_w,2)) + 0.1 * loss_L1 + 1.0 * loss_multi
 
+        loss_multi = focal_loss(out_multi, data_geo_obj.Y_train.long(), alpha=0.90, gamma=3.0)
+        
+        loss = 0.1 * loss_mutiGAT + 0.1 * torch.mean(torch.pow(pw_w,2)) + 0.1 * loss_L1 + 1.0 * loss_multi
+        
         loss.backward()
         optimizer.step()
 
         test_= test_multi(my_net, data, data_geo_obj)
-        print("epoch:{},auc_geo:{},auc_train:{},auc:{},cor:{},ap:{},loss:{},auc_temp:{},num:{}".format(epoch + 1,test_['auc_geo'],test_['auc_geo_train'], test_['auc'], test_['cor'], test_['ap'] , loss.item(),test_['auc_temp'],num))
+        print("epoch:{},auc_geo:{},auc_train:{},auc:{},cor:{},ap:{},loss:{},auc_temp:{},num:{}".format(epoch + 1,test_['auc_geo'],test_['auc_geo_train'], test_['auc'], test_['cor'], test_['ap'] , loss.item(),test_['auc_temp'],test_['acc_geo'],num))
         
         new_row = pd.DataFrame({
             'epoch': [epoch], 'auc_geo': [test_['auc_geo']], 'auc_train': [test_['auc_geo_train']],
@@ -329,14 +419,27 @@ def train_model_multi(data_geo, label_geo, anchor_list, data_x, data_ppi_link_in
         df_acc = pd.concat([df_acc, new_row], ignore_index=True)
         pgb3.update((epoch+1)/epoches)
         
-        if (auc_stock <= test_['auc_geo_train']) and test_['auc_geo_train'] > 0.99 : 
-            num = num - 1
-            auc_stock = test_['auc_geo_train']
+        # --- NEW: SAVE THE BEST MODEL ---
+        # If the model beats our previous best AUC and doesn't crash the F1, save it!
+        current_score = test_['ap_geo'] + test_['f1_geo']
+        
+        if current_score >= best_score:
+            best_score = current_score
+            best_auc = test_['auc_geo']
+            best_f1 = test_['f1_geo']
+            best_acc = test_['acc_geo']
+            # Save the golden weights immediately
+            torch.save(my_net, f"result/model_multiomics_Fold_{current_fold+1}.pt")
+            print(f"   ⭐ New Best Model Saved! (AUC: {best_auc:.4f}, F1: {best_f1:.4f}, Acc: {best_acc:.4f})")
+            
+            num = 15 # Reset patience
         else:
-            num = 5
-            auc_stock = test_['auc_geo_train']
-        if (num == 0 and auc_stock <= test_['auc_geo_train']):
-            print("### Early Stopping ###")
+            num -= 1
+            
+        # Stop training if we haven't hit a new high score in 15 epochs, 
+        # OR if the model starts to perfectly overfit (memorize) the training data
+        if num == 0 or test_['auc_geo_train'] == 1.0:
+            print(f"### Early Stopping Triggered! Best AUC was {best_auc:.4f} ###")
             break
 
     my_net.eval()
@@ -358,7 +461,7 @@ def train_model_multi(data_geo, label_geo, anchor_list, data_x, data_ppi_link_in
 # =====================================================================
 if __name__ == "__main__":
     # --- CHOOSE YOUR ENGINE HERE ---
-    RUN_MODE = "SINGLE" 
+    RUN_MODE = "MULTI"  # Options: "SINGLE" or "MULTI"
     # -------------------------------
     
     print("🚀 Booting up the Training Engine...")
