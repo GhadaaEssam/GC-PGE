@@ -11,7 +11,7 @@ import random
 from sklearn.metrics import roc_auc_score, f1_score, average_precision_score, confusion_matrix, accuracy_score, roc_curve
 from sklearn import model_selection
 import numpy as np
-from model.preprocess import make_data_geo, get_train_edge, make_data, pgb, load_multiomics, make_data_multiomics
+from model.preprocess import make_data_geo, get_train_edge, make_data, pgb, load_multiomics, make_data_multiomics, make_data_multiomics_production
 from scipy.special import erfinv 
 from model.model import Model
 import torch.nn.functional as F
@@ -455,13 +455,133 @@ def train_model_multi(data_geo, label_geo, anchor_list, data_x, data_ppi_link_in
 
     if hasattr(progressBarObj, 'setValue'):
         progressBarObj.setValue(int(100))
+
+# =====================================================================
+# PRODUCTION MODE (100% DATA, DEPLOYMENT PHASE)
+# =====================================================================
+def train_production_model(data_geo, label_geo, anchor_list, data_x, data_ppi_link_index, data_homolog_index, progressBarObj):
+    print("\n🏭 Booting Production Facility...")
+    os.makedirs('result/production/', exist_ok=True)
+
+    label_df = pd.read_csv(r"data/Patients_labels.csv", header=0, index_col=0)
+    label_geo = label_df.iloc[:, 0] 
+    rna_df = pd.read_csv(r"data/rna_ml.csv", header=0, index_col=0)
     
+    valid_patients = label_geo.index.intersection(rna_df.index)
+    label_geo = label_geo.loc[valid_patients]
+    
+    omics_dict = load_multiomics(
+        data_geo=r"data/rna_ml.csv", data_meth=r"data/meth_ml.csv",
+        data_cnv=r"data/cnv_ml.csv", data_snv=r"data/snv_ml.csv", sample_ids=valid_patients 
+    )
+    
+    for key in ['data_geo_x', 'data_meth_x', 'data_cnv_x', 'data_snv_x']:
+        df = omics_dict[key]
+        rankGauss = (df.values / df.values.max() - 0.5) * 2
+        rankGauss = np.clip(rankGauss, -1 + EPSILON, 1 - EPSILON)
+        rankGauss = erfinv(rankGauss)
+        omics_dict[key] = pd.DataFrame(rankGauss, columns=df.columns, index=df.index)
+    
+    data_geo_obj = make_data_multiomics_production(omics_dict, label_geo)
+
+    anchor_index = anchor_list.result_num[anchor_list.result_num==1].index
+    # Set test_size to 0.001 to give the Graph Network almost all the genes
+    train_anchor, test_anchor = model_selection.train_test_split(anchor_index, test_size=0.001)
+    train_anchor = pd.Series(list(set(anchor_index.to_list())-set(test_anchor.to_list())))
+    train_anchor_numerical = pd.Series([data_x.index.get_loc(gene) for gene in train_anchor if gene in data_x.index])
+    
+    pgb1 = pgb(progressBarObj, 0, 20)
+    train_edge_ppi , _ = get_train_edge(data_ppi_link_index, train_anchor_numerical, pgb1)
+    pgb2 = pgb(progressBarObj, 20, 40)
+    train_edge_homolog , _ = get_train_edge(data_homolog_index, train_anchor_numerical, pgb2)
+    
+    data_obj = make_data(data_x, train_edge_ppi, train_edge_homolog, anchor_list, test_anchor)
+
+    # --- NEW: Initialize the Loss Tracker (Just like the base model) ---
+    df_acc = pd.DataFrame(columns=('epoch', 'loss'))
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    my_net = Model(data_geo_x_shape=data_geo_obj.X_train_rna.shape, num_muti_gat=8, num_muti_mlp=5, num_node_features=data_obj.num_node_features, data_x_N=data_obj.train_mask.shape[0]).to(device)
+    data = data_obj.to(device)  
+    data_geo_obj = data_geo_obj.to(device)
+    
+    optimizer = torch.optim.Adam(my_net.parameters(), lr=0.005) 
+    my_net.train()
+    
+    epoches = 150
+    pgb3 = pgb(progressBarObj,40,98)
+    
+    print("🧠 Forging Final Master Model (150 Epochs)...")
+    for epoch in range(epoches):
+        optimizer.zero_grad()
+        result = my_net(data, data_geo_obj.X_train_rna, x_meth=data_geo_obj.X_train_meth, x_cnv=data_geo_obj.X_train_cnv, x_snv=data_geo_obj.X_train_snv)  
+        
+        loss_multi = focal_loss(result['out_multiomics'], data_geo_obj.Y_train.long(), alpha=0.90, gamma=3.0)
+        loss = 0.1 * result['loss_mutiGAT'] + 0.1 * torch.mean(torch.pow(result['pw_w'],2)) + 0.1 * result['loss_L1'] + 1.0 * loss_multi
+        
+        loss.backward()
+        optimizer.step()
+        
+        # --- NEW: Save the loss for this epoch ---
+        new_row = pd.DataFrame({'epoch': [epoch], 'loss': [loss.item()]})
+        df_acc = pd.concat([df_acc, new_row], ignore_index=True)
+        
+        if epoch % 10 == 0: print(f"   Epoch {epoch}: Loss = {loss.item():.4f}")
+        pgb3.update((epoch+1)/epoches)
+
+    # Save the Final Master Weights
+    torch.save(my_net, "result/production/final_multiomics_model.pt")
+    print("✅ FINAL MASTER MODEL SAVED: result/production/final_multiomics_model.pt")
+    
+    # =====================================================================
+    # EXPORT ALL FINAL PRODUCTION ARTIFACTS
+    # =====================================================================
+    print("💾 Exporting Final Model Components & Graph Embeddings...")
+    my_net.eval() # Lock the weights for extraction
+    
+    with torch.no_grad():
+        # Run one final forward pass on the 100% dataset
+        result = my_net(data, data_geo_obj.X_train_rna, x_meth=data_geo_obj.X_train_meth, x_cnv=data_geo_obj.X_train_cnv, x_snv=data_geo_obj.X_train_snv)
+        
+        # 1. Save RNA-Only / Graph predictions (cor)
+        pd.DataFrame({"predict": result['cor'].detach().cpu().numpy()}).to_csv("result/production/predict_muti_all_production.csv", index=False)
+        
+        # 2. Save Multi-Omics Predictions, Probabilities, & True Labels
+        out_probs = torch.exp(result['out_multiomics'][:, 1]).detach().cpu().numpy()
+        out_preds = (out_probs >= 0.5).astype(int) 
+        
+        pd.DataFrame({
+            "True_Label": data_geo_obj.Y_train.cpu().numpy(),
+            "Probability_Resistant": out_probs,
+            "Final_Prediction": out_preds
+        }).to_csv("result/production/predict_out_production.csv", index=False)
+        
+        # 3. Save the learned Graph Embeddings (VIMP_G)
+        pd.DataFrame(result['graph'].detach().cpu().numpy()).to_csv("result/production/graph_production.csv", index=False)
+        
+        # 4. Save the Modality Attention Weights (pw_w)
+        pd.DataFrame({"predict": result['pw_w'].detach().cpu().numpy()}).to_csv("result/production/pw_w_production.csv", index=False)
+
+        # 5. Export the 100% Training Dataset
+        X_train_all = torch.cat([data_geo_obj.X_train_rna, data_geo_obj.X_train_meth, data_geo_obj.X_train_cnv, data_geo_obj.X_train_snv], dim=1).cpu().numpy()
+        train_export_df = pd.DataFrame(X_train_all)
+        train_export_df.insert(0, 'Target_Label', data_geo_obj.Y_train.cpu().numpy())
+        train_export_df.to_csv("result/production/Training_Data_Production.csv", index=False)
+        
+        # 6. Save the Loss History
+        df_acc.to_csv("result/production/lossAndAcc_production.csv", index=False)
+
+    print("✅ ALL PRODUCTION COMPONENTS EXPORTED SUCCESSFULLY!")
+
+    if hasattr(progressBarObj, 'setValue'): 
+        progressBarObj.setValue(int(100))
+      
 # =====================================================================
 # THE MASTER SWITCH
 # =====================================================================
 if __name__ == "__main__":
     # --- CHOOSE YOUR ENGINE HERE ---
-    RUN_MODE = "MULTI"  # Options: "SINGLE" or "MULTI"
+    RUN_MODE = "PRODUCTION"  # Options: "SINGLE" or "MULTI"
     # -------------------------------
     
     print("🚀 Booting up the Training Engine...")
@@ -503,3 +623,8 @@ if __name__ == "__main__":
             print(f"=======================================================")
             train_model_multi(None, None, anchor_list, data_x, data_ppi, data_homolog, dummy_pgb, current_fold)
         print("\n✅ All 5 Folds Complete!")
+        
+        
+    elif RUN_MODE == "PRODUCTION":
+        print("\n🚀 Starting the PRODUCTION Engine (100% Data)...")
+        train_production_model(None, None, anchor_list, data_x, data_ppi, data_homolog, dummy_pgb)

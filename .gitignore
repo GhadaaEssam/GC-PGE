@@ -3,3 +3,5 @@ __pycache__
 data/
 .vscode/
 result/
+avg_results.py
+visuals/

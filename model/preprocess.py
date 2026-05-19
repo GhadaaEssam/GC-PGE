@@ -276,6 +276,30 @@ def make_data_multiomics(omics_dict, labels, k, i, seed=42):
 
     return data
 
+def make_data_multiomics_production(omics_dict, labels):
+    from torch_geometric.data import Data
+    import torch
+    import pandas as pd
+    data = Data()
+    
+    if isinstance(labels, pd.DataFrame):
+        label_series = labels.iloc[:, 0].copy()
+    else:
+        label_series = labels.copy()
+
+    sample_ids = [str(sample_id) for sample_id in omics_dict['sample_ids']]
+    label_series.index = label_series.index.map(str)
+    label_series = label_series.loc[sample_ids]
+
+    data.X_train_rna = torch.tensor(omics_dict['data_geo_x'].values, dtype=torch.float)
+    data.X_train_meth = torch.tensor(omics_dict['data_meth_x'].values, dtype=torch.float)
+    data.X_train_cnv = torch.tensor(omics_dict['data_cnv_x'].values, dtype=torch.float)
+    data.X_train_snv = torch.tensor(omics_dict['data_snv_x'].values, dtype=torch.float)
+    data.Y_train = torch.tensor(label_series.values, dtype=torch.long)
+    
+    print(f"🏭 Production Data Ready: 100% of patients ({len(label_series)}) loaded for final training.")
+    return data
+
 class pgb():
     def __init__(self,signalObj,min_value,max_value):
         self.min_value = min_value

@@ -11,9 +11,10 @@ import random
 from sklearn.metrics import roc_auc_score, f1_score, average_precision_score,confusion_matrix
 from sklearn import model_selection
 import numpy as np
-from model.preprocess import make_data_geo, get_train_edge, make_data,pgb
+from model.preprocess import make_data_geo, get_train_edge, make_data,pgb, load_multiomics
 from model.model import Model
 from scipy.special import erfinv 
+
 EPSILON = np.finfo(float).eps
 
 def make_data_geo_no_label(data_geo):
@@ -163,13 +164,55 @@ def predict_model_multiomics(model_path, omics_dict, anchor_list, data_x, data_p
     print("\n✅ Ensemble Prediction Complete! Results saved to CSV.")
     if hasattr(progressBarObj, 'setValue'):
         progressBarObj.setValue(int(100))
+def predict_production_multiomics(omics_dict, anchor_list, data_x, data_ppi_link_index, data_homolog_index, progressBarObj):
+    print("🧬 Initializing Master Production Pipeline...")
+    
+    # Assuming make_data_multiomics_no_label exists in your preprocess.py
+    data_geo_obj = make_data_multiomics_no_label(omics_dict)
 
+    anchor_index = anchor_list.result_num[anchor_list.result_num==1].index
+    # 0.001 trick to give the graph almost all the known biology
+    train_anchor, test_anchor = model_selection.train_test_split(anchor_index, test_size=0.001)
+    train_anchor = pd.Series(list(set(anchor_index.to_list())-set(test_anchor.to_list())))
+    train_anchor_numerical = pd.Series([data_x.index.get_loc(gene) for gene in train_anchor if gene in data_x.index])
+
+    print("📂 Loading networks...")
+    pgb1 = pgb(progressBarObj, 0, 30)
+    train_edge_ppi, _ = get_train_edge(data_ppi_link_index, train_anchor_numerical, pgb1)
+    pgb2 = pgb(progressBarObj, 30, 60)
+    train_edge_homolog, _ = get_train_edge(data_homolog_index, train_anchor_numerical, pgb2)
+    
+    data_obj = make_data(data_x, train_edge_ppi, train_edge_homolog, anchor_list, test_anchor)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    data = data_obj.to(device)
+    data_geo_obj = data_geo_obj.to(device)
+    
+    print("\n🩺 Consulting Final Master Model...")
+    model_path = "result/production/final_multiomics_model.pt"
+    
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"⚠️ Cannot find {model_path}. You must run train.py in PRODUCTION mode first!")
+        
+    my_net = torch.load(model_path, map_location=device, weights_only=False)
+    my_net.eval()
+    
+    with torch.no_grad():
+        result = my_net(data, data_geo_obj.X_rna, x_meth=data_geo_obj.X_meth, x_cnv=data_geo_obj.X_cnv, x_snv=data_geo_obj.X_snv)  
+        final_probs = torch.exp(result['out_multiomics']) 
+        final_diagnosis = final_probs.argmax(dim=1).detach().cpu()
+        
+    os.makedirs('result/production/', exist_ok=True)
+    pd.DataFrame({"predict": final_diagnosis}).to_csv("result/production/predict_out.csv", index=False)
+    pd.DataFrame({"Probability_Resistant": final_probs[:, 1].detach().cpu()}).to_csv("result/production/probabilities.csv", index=False)
+    
+    print("\n✅ Patient Diagnosis Complete! Results saved to result/production/")
+    
 # =====================================================================
 # STANDALONE TESTING BLOCK
 # =====================================================================
-if __name__ == "__main__":
-    from model.preprocess import load_multiomics
-    print("🚀 Booting up the Prediction Engine Test...")
+if __name__ == "__main__":    
+    print("🚀 Booting up the Clinical Prediction Engine...")
     
     class DummySignal:
         def emit(self, val): pass
@@ -183,13 +226,40 @@ if __name__ == "__main__":
     data_ppi = pd.read_csv(r'data/ppi_final_edge_list.csv', header=0)
     data_homolog = pd.read_csv(r'data/homology_final_edge_list.csv', header=0)
     
+   # ---------------------------------------------------------
+    # 🎯 TARGETING THE HOLDOUT PATIENT IN THE TEST FOLDER
+    # ---------------------------------------------------------
+    print("📂 Loading Holdout Patient Data (TCGA-E9-A1RI)...")
+    
+    # NEW FIX: Because the test CSVs only have the data row and no headers,
+    # we must tell pandas to use header=None so it doesn't accidentally 
+    # turn your patient's data into the column names!
+    df_rna = pd.read_csv(r"data/test/rna_ml_test.csv", header=None, index_col=0)
+    df_meth = pd.read_csv(r"data/test/meth_ml_test.csv", header=None, index_col=0)
+    df_cnv = pd.read_csv(r"data/test/cnv_ml_test.csv", header=None, index_col=0)
+    df_snv = pd.read_csv(r"data/test/snv_ml_test.csv", header=None, index_col=0)
+    
+    patient_id = df_rna.index.tolist()
+    
+    # Pass the dataframes directly into load_multiomics instead of the file paths
     omics_dict = load_multiomics(
-        data_geo=r"data/rna_ml.csv",
-        data_meth=r"data/meth_ml.csv",
-        data_cnv=r"data/cnv_ml.csv",
-        data_snv=r"data/snv_ml.csv",
-        sample_ids=pd.read_csv(r"data/rna_ml.csv", header=0, index_col=0).index.tolist()
+        data_geo=df_rna,
+        data_meth=df_meth,
+        data_cnv=df_cnv,
+        data_snv=df_snv,
+        sample_ids=patient_id 
     )
     
-    # Dummy string passed just to fulfill the argument, the script uses the result folder automatically!
-    predict_model_multiomics("ignore_me", omics_dict, anchor_list, data_x, data_ppi, data_homolog, dummy_pgb)
+    # Apply RankGauss Normalization so the math matches the training data exactly!
+    from scipy.special import erfinv 
+    EPSILON = np.finfo(float).eps
+    
+    for key in ['data_geo_x', 'data_meth_x', 'data_cnv_x', 'data_snv_x']:
+        df = omics_dict[key]
+        rankGauss = (df.values / df.values.max() - 0.5) * 2
+        rankGauss = np.clip(rankGauss, -1 + EPSILON, 1 - EPSILON)
+        rankGauss = erfinv(rankGauss)
+        omics_dict[key] = pd.DataFrame(rankGauss, columns=df.columns, index=df.index)
+    
+    # Run the diagnosis!
+    predict_production_multiomics(omics_dict, anchor_list, data_x, data_ppi, data_homolog, dummy_pgb)
